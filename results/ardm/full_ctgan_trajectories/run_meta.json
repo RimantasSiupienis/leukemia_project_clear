@@ -1,0 +1,17 @@
+{
+  "seed": 42,
+  "history_len": 24,
+  "pred_len": 24,
+  "target_cols": [
+    "HR",
+    "NISysABP",
+    "NIDiasABP",
+    "NIMAP",
+    "RespRate",
+    "Temp",
+    "SpO2"
+  ],
+  "checkpoint": "results/ardm/physionet2012/ardm_run/_official_out/Checkpoints_24/checkpoint-1.pt",
+  "pred_npy": "/home/rimce/Documents/Marble Docs/leukemia_project/results/ardm/full_ctgan_trajectories/ardm_pred/pred.npy",
+  "out_long_parquet": "results/ardm/full_ctgan_trajectories/ctgan_synth_future_long.parquet"
+}

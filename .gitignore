@@ -26,10 +26,14 @@ venv/
 # Ignore all results EXCEPT CTGAN physionet
 ########################
 results/*
+
 !results/ctgan/
 !results/ctgan/physionet2012/
 !results/ctgan/physionet2012/**
 
+!results/ardm/
+!results/ardm/physionet2012/
+!results/ardm/physionet2012/**
 ########################
 # DATA
 # Keep processed parquet only

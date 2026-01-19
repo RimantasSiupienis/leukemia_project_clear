@@ -1,0 +1,27 @@
+{
+  "model": "ARDM",
+  "start_time_unix": 1768842966.758946,
+  "end_time_unix": 1768843434.1011174,
+  "seed": 42,
+  "official_repo_dir": "models/ardm_model/ardm_official/ARMD",
+  "official_git_commit": "07a3dc4674f2f5cdf401e1a7f8895939bb2b07e2",
+  "cache_key": "7cc556999721",
+  "n_test_patients": 1600,
+  "pred_len": 24,
+  "targets": [
+    "HR",
+    "NISysABP",
+    "NIDiasABP",
+    "NIMAP",
+    "RespRate",
+    "Temp",
+    "SpO2"
+  ],
+  "artifacts": {
+    "config_resolved": "config_resolved.yaml",
+    "split_ids": "split_ids.json",
+    "run_meta": "run_meta.json",
+    "real_future_long": "real_future_long.parquet",
+    "synth_future_long": "synth_future_long.parquet"
+  }
+}

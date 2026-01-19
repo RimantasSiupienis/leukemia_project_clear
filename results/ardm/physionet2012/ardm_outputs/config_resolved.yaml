@@ -1,0 +1,77 @@
+seed: 42
+device: cuda
+data:
+  parquet_path: data/processed/physionet2012_long.parquet
+  id_col: patient_id
+  time_col: t
+  target_cols:
+  - HR
+  - NISysABP
+  - NIDiasABP
+  - NIMAP
+  - RespRate
+  - Temp
+  - SpO2
+  history_len: 24
+  pred_len: 24
+  stride: 1
+  split:
+    type: patient_random
+    seed: 42
+    salt: ardm_v1
+    train: 0.7
+    val: 0.1
+    test: 0.2
+  normalization:
+    type: zscore
+    save_stats: true
+official:
+  repo_dir: models/ardm_model/ardm_official/ARMD
+  entrypoint:
+    python: python
+dataloader:
+  batch_size: 128
+  shuffle: true
+  num_workers: 0
+  pin_memory: false
+  drop_last: false
+train:
+  batch_size: 128
+  lr: 1e-3
+  max_iters: 2000
+sampling:
+  steps: 1
+  deterministic: true
+output:
+  dir: results/ardm/physionet2012
+  run_name: ardm_run
+model:
+  target: Models.autoregressive_diffusion.armd.ARMD
+  params:
+    seq_length: 24
+    feature_size: 7
+    timesteps: 24
+    sampling_timesteps: 1
+    loss_type: l1
+    beta_schedule: cosine
+    w_grad: true
+solver:
+  base_lr: 0.001
+  max_epochs: 2000
+  results_folder: results/ardm/physionet2012/ardm_run/_official_out/Checkpoints
+  gradient_accumulate_every: 1
+  save_cycle: 2000
+  ema:
+    decay: 0.995
+    update_interval: 10
+  scheduler:
+    target: engine.lr_sch.ReduceLROnPlateauWithWarmup
+    params:
+      factor: 0.5
+      patience: 4000
+      min_lr: 1.0e-05
+      threshold: 0.1
+      threshold_mode: rel
+      warmup_lr: 0.0008
+      warmup: 500
+      verbose: false
