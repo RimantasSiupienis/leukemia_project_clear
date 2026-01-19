@@ -1,252 +1,180 @@
-import sys
-from pathlib import Path
+from __future__ import annotations
 
-# Setting repo root is on PYTHONPATH
-THIS_FILE = Path(__file__).resolve()
-REPO_ROOT = THIS_FILE.parents[3]
-sys.path.insert(0, str(REPO_ROOT))
-
-# Imports
 import argparse
-import json
+import subprocess
+from pathlib import Path
+from typing import List
 
 import numpy as np
 import pandas as pd
 import yaml
 
-from models.s4m_model.src.utils import ensure_dir, save_json, set_seed  # type: ignore
-from models.ardm_model.src.official_api_predict_only import predict_only_official  # type: ignore
-from models.ardm_model.src.ardm_shared import reshape_preds, build_ctgan_future_long  # type: ignore
+from models.s4m_model.src.utils import set_seed, ensure_dir, save_json
+from models.ardm_model.src.official_api_predict_only import predict_only_official
 
 
-def _load_train_ids_from_ardm_split(split_ids_json: Path) -> list[str]:
-    obj = json.load(open(split_ids_json, "r", encoding="utf-8"))
-
-    # Accepts multiple formats:
-    # 1. "train": [], "val": [], "test": []
-    if isinstance(obj, dict) and "train" in obj and isinstance(obj["train"], list):
-        return [str(x) for x in obj["train"]]
-
-    # 2. "split_ids": {"train": [], ...}
-    if (
-        isinstance(obj, dict)
-        and "split_ids" in obj
-        and isinstance(obj["split_ids"], dict)
-        and "train" in obj["split_ids"]
-        and isinstance(obj["split_ids"]["train"], list)
-    ):
-        return [str(x) for x in obj["split_ids"]["train"]]
-
-    # 3. legacy: "train_ids": []
-    if isinstance(obj, dict) and "train_ids" in obj and isinstance(obj["train_ids"], list):
-        return [str(x) for x in obj["train_ids"]]
-
-    raise KeyError(
-        f"Could not find train ids in {split_ids_json}. "
-        "Expected one of: "
-        "{train:[...]}, {split_ids:{train:[...]}}, or {train_ids:[...]}."
-    )
+def _run(cmd: List[str], cwd: Path | None = None) -> None:
+    p = subprocess.run(cmd, cwd=str(cwd) if cwd else None)
+    if p.returncode != 0:
+        raise RuntimeError(f"Command failed (exit={p.returncode}): {' '.join(cmd)}")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("ardm_config", help="Path to ARDM wrapper config yaml (your project config)")
-    ap.add_argument("ardm_run_dir", help="Trained ARDM run dir (contains split_ids.json and _official_out)")
-    ap.add_argument("ctgan_static_parquet", help="CTGAN static parquet")
-    ap.add_argument("--out_dir", default="results/ardm/full_ctgan_trajectories", help="Output dir")
-    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    ap.add_argument("--checkpoint_name", default="_official_out/Checkpoints_24/checkpoint-1.pt")
-    ap.add_argument("--non_strict_baseline", action="store_true")
-    args = ap.parse_args()
+def build_ctgan_future_long(
+    ctgan_ids: List[str],
+    id_col: str,
+    time_col: str,
+    target_cols: List[str],
+    preds_3d: np.ndarray,
+    time_start: int = 0,
+) -> pd.DataFrame:
+    n, pred_len, c = preds_3d.shape
+    if len(ctgan_ids) != n:
+        raise ValueError(f"ctgan_ids length {len(ctgan_ids)} != preds_3d first dim {n}")
+    if c != len(target_cols):
+        raise ValueError(f"preds_3d last dim {c} != len(target_cols) {len(target_cols)}")
 
-    ardm_cfg_path = Path(args.ardm_config)
-    ardm_run_dir = Path(args.ardm_run_dir)
-    ctgan_static = Path(args.ctgan_static_parquet)
-    out_dir = Path(args.out_dir)
+    rows = []
+    for i, pid in enumerate(ctgan_ids):
+        for t in range(pred_len):
+            row = {id_col: str(pid), time_col: int(time_start + t)}
+            for j, col in enumerate(target_cols):
+                row[col] = float(preds_3d[i, t, j])
+            rows.append(row)
+    return pd.DataFrame(rows)
 
-    ensure_dir(str(out_dir))
 
-    with open(ardm_cfg_path, "r", encoding="utf-8") as f:
+def reshape_preds(preds: np.ndarray, n_series: int, pred_len: int, n_targets: int) -> np.ndarray:
+    # Want: [N, pred_len, C]
+    if preds.ndim == 3:
+        if preds.shape == (n_series, pred_len, n_targets):
+            return preds
+        if preds.shape == (n_series, n_targets, pred_len):
+            return np.transpose(preds, (0, 2, 1))
+        raise ValueError(f"Unexpected 3D preds shape: {preds.shape}")
+
+    if preds.ndim == 2:
+        if preds.shape[0] != n_series:
+            raise ValueError(f"preds first dim {preds.shape[0]} != n_series {n_series}")
+        if preds.shape[1] == pred_len * n_targets:
+            return preds.reshape(n_series, pred_len, n_targets)
+        raise ValueError(f"Unexpected 2D preds shape: {preds.shape}")
+
+    raise ValueError(f"Unexpected preds ndim={preds.ndim}, shape={preds.shape}")
+
+
+def main(cfg_path: str) -> None:
+    cfg_path = str(cfg_path)
+    with open(cfg_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    seed = int(cfg.get("seed", 42))
-    set_seed(seed)
+    set_seed(int(cfg["seed"]))
 
-    batch_size = int(cfg.get("train", {}).get("batch_size", 128))
+    # output
+    out_root = Path(cfg["output"]["dir"])
+    run_name = str(cfg["output"]["run_name"])
+    out_dir = ensure_dir(out_root / run_name)
+    ensure_dir(out_dir / "_predict_only")
+
+    # CTGAN static parquet
+    ctgan_static_path = Path(cfg["ctgan"]["static_parquet"]).resolve()
+    if not ctgan_static_path.exists():
+        raise FileNotFoundError(f"ctgan.static_parquet not found: {ctgan_static_path}")
+
+    # checkpoint
+    checkpoint_path = Path(cfg["ctgan"]["checkpoint_path"]).resolve()
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"ctgan.checkpoint_path not found: {checkpoint_path}")
+
+    # official repo dir (must be cloned already by your notebook script OR present locally)
+    repo_dir = Path(cfg["official"]["repo_dir"]).resolve()
+    if not repo_dir.exists():
+        raise FileNotFoundError(
+            f"official.repo_dir not found: {repo_dir}\n"
+            f"Either clone ARMD into that folder in your notebook, or point repo_dir to where it already is."
+        )
 
     id_col = cfg["data"]["id_col"]
     time_col = cfg["data"]["time_col"]
     target_cols = list(cfg["data"]["target_cols"])
+    history_len = int(cfg["data"]["history_len"])
+    pred_len = int(cfg["data"]["pred_len"])
+    window_len = history_len + pred_len
 
-    # Supports multiple config layouts for history_len/pred_len (debugging)
-    if "task" in cfg:
-        history_len = int(cfg["task"]["history_len"])
-        pred_len = int(cfg["task"]["pred_len"])
-    elif "data" in cfg and ("history_len" in cfg["data"] or "pred_len" in cfg["data"]):
-        history_len = int(cfg["data"].get("history_len"))
-        pred_len = int(cfg["data"].get("pred_len"))
-    elif "train" in cfg and ("history_len" in cfg["train"] or "pred_len" in cfg["train"]):
-        history_len = int(cfg["train"].get("history_len"))
-        pred_len = int(cfg["train"].get("pred_len"))
-    else:
-        raise KeyError(
-            "Could not find history_len/pred_len in config. Expected one of:\n"
-            "  task.history_len + task.pred_len\n"
-            "  data.history_len + data.pred_len\n"
-            "  train.history_len + train.pred_len"
-        )
+    # Load CTGAN static (only for ids + maybe for bootstrap script)
+    df_static = pd.read_parquet(ctgan_static_path)
+    if id_col not in df_static.columns:
+        raise ValueError(f"CTGAN static missing id_col='{id_col}'")
+    ctgan_ids = df_static[id_col].astype(str).tolist()
+    n_series = len(ctgan_ids)
+    n_targets = len(target_cols)
 
-    # Finding real long parquet path from config 
-    # supports multiple key names (debugging)
-    data_cfg = cfg.get("data", {})
-    candidates = [
-        "real_long_parquet",
-        "real_long_path",
-        "long_parquet",
-        "long_path",
-        "longitudinal_path",
-        "longitudinal_parquet",
-        "path_long",
-    ]
-    real_long_val = None
-    for k in candidates:
-        if k in data_cfg and data_cfg[k]:
-            real_long_val = data_cfg[k]
-            break
+    # Bootstrap windows using your existing script
+    # REQUIRED: your script must output [N, window_len, C] into out_npy
+    windows_npy = out_dir / "ctgan_bootstrap_windows.npy"
+    bootstrap_script = Path("scripts/bootstrap_ctgan_to_history.py").resolve()
+    if not bootstrap_script.exists():
+        raise FileNotFoundError(f"Missing bootstrap script: {bootstrap_script}")
 
-    if real_long_val is None:
-        import os
+    _run([
+        "python", str(bootstrap_script),
+        "--static_parquet", str(ctgan_static_path),
+        "--out_npy", str(windows_npy),
+        "--id_col", str(id_col),
+        "--target_cols", ",".join(target_cols),
+        "--history_len", str(history_len),
+        "--pred_len", str(pred_len),
+    ])
 
-        env_val = os.environ.get("REAL_LONG_PARQUET", "").strip()
-        if env_val:
-            real_long_val = env_val
-
-    if real_long_val is None:
-        raise KeyError(
-            "Could not find real longitudinal parquet path in cfg['data'].\n"
-            f"Tried keys: {candidates}\n"
-            "Either add one of these keys under data: in  YAML, or set env var REAL_LONG_PARQUET."
-        )
-
-    real_long_parquet = Path(real_long_val)
-    if not real_long_parquet.exists():
-        raise FileNotFoundError(f"Real long parquet not found: {real_long_parquet}")
-
-    split_ids_json = ardm_run_dir / "split_ids.json"
-    if not split_ids_json.exists():
-        raise FileNotFoundError(f"Expected split_ids.json in trained ARDM run dir: {split_ids_json}")
-
-    train_ids = _load_train_ids_from_ardm_split(split_ids_json)
-    train_only_json = out_dir / "train_ids_for_bootstrap.json"
-    with open(train_only_json, "w", encoding="utf-8") as f:
-        json.dump({"train_ids": train_ids}, f)
-
-    bootstrap_dir = out_dir / "bootstrap"
-    ensure_dir(str(bootstrap_dir))
-
-    # Running bootstrap script
-    bootstrap_py = REPO_ROOT / "scripts" / "bootstrap_ctgan_to_history.py"
-    if not bootstrap_py.exists():
-        raise FileNotFoundError(f"bootstrap script not found: {bootstrap_py}")
-
-    cmd = [
-        "python",
-        str(bootstrap_py),
-        "--ctgan_static_parquet",
-        str(ctgan_static),
-        "--real_long_parquet",
-        str(real_long_parquet),
-        "--out_dir",
-        str(bootstrap_dir),
-        "--id_col",
-        str(id_col),
-        "--time_col",
-        str(time_col),
-        "--target_cols",
-        ",".join(target_cols),
-        "--history_len",
-        str(history_len),
-        "--pred_len",
-        str(pred_len),
-        "--seed",
-        str(seed),
-        "--train_split_ids_json",
-        str(train_only_json),
-    ]
-    if args.non_strict_baseline:
-        cmd.append("--non_strict_baseline")
-
-    import subprocess
-
-    p = subprocess.run(cmd)
-    if p.returncode != 0:
-        raise RuntimeError(f"Bootstrap failed: {' '.join(cmd)}")
-
-    windows_npy = bootstrap_dir / "bootstrap_windows_for_model.npy"
     if not windows_npy.exists():
-        raise FileNotFoundError(f"Expected bootstrap windows not found: {windows_npy}")
+        raise RuntimeError("Bootstrap script did not create ctgan_bootstrap_windows.npy")
 
-    ckpt = ardm_run_dir / args.checkpoint_name
-    if not ckpt.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
-
-    print(f"[reuse] Using ARDM checkpoint: {ckpt}")
-
-    repo_dir = Path(cfg["official"]["repo_dir"])
-    if not repo_dir.exists():
-        raise FileNotFoundError(f"Official ARDM repo not found: {repo_dir}")
-
-    ardm_pred_out = out_dir / "ardm_pred"
-    ensure_dir(str(ardm_pred_out))
-
-    pred_npy = predict_only_official(
+    # Predict only (GPU if cfg.device=cuda and available)
+    pred_path = predict_only_official(
         repo_dir=repo_dir,
-        checkpoint_path=ckpt,
+        checkpoint_path=checkpoint_path,
         test_npy_path=windows_npy,
-        out_dir=ardm_pred_out,
+        out_dir=out_dir / "_predict_only",
         history_len=history_len,
         pred_len=pred_len,
-        batch_size=batch_size,
-        device=args.device,
+        batch_size=int(cfg["train"]["batch_size"]),
+        device=str(cfg.get("device", "cuda")),
     )
 
-    preds = np.load(pred_npy)
-    static = pd.read_parquet(ctgan_static)
-    if "patient_id" not in static.columns:
-        raise ValueError("CTGAN static parquet must contain 'patient_id' column")
+    preds = np.load(pred_path)
+    preds_3d = reshape_preds(preds, n_series=n_series, pred_len=pred_len, n_targets=n_targets)
 
-    ids = static["patient_id"].astype(str).tolist()
-
-    preds_3d = reshape_preds(
-        preds,
-        n_series=len(ids),
-        pred_len=pred_len,
-        n_targets=len(target_cols),
-    )
-
-    out_long = out_dir / "ctgan_synth_future_long.parquet"
-    out_df = build_ctgan_future_long(
-        ctgan_ids=ids,
+    # Convert to long parquet trajectories
+    synth_future_long = build_ctgan_future_long(
+        ctgan_ids=ctgan_ids,
         id_col=id_col,
         time_col=time_col,
         target_cols=target_cols,
         preds_3d=preds_3d,
-        time_start=0,  # to match validated output (t=0..pred_len-1)
+        time_start=0,
     )
-    out_df.to_parquet(out_long, index=False)
+
+    synth_future_long.to_parquet(out_dir / "ctgan_synth_future_long.parquet", index=False)
 
     meta = {
-        "seed": seed,
-        "history_len": history_len,
-        "pred_len": pred_len,
-        "target_cols": target_cols,
-        "checkpoint": str(ckpt),
-        "pred_npy": str(pred_npy),
-        "out_long_parquet": str(out_long),
+        "model": "ARDM_CTGAN_REUSE",
+        "ctgan_static_parquet": str(ctgan_static_path),
+        "official_repo_dir": str(repo_dir),
+        "checkpoint_path": str(checkpoint_path),
+        "bootstrap_windows_npy": str(windows_npy),
+        "pred_npy": str(pred_path),
+        "out_parquet": "ctgan_synth_future_long.parquet",
+        "n_ctgan_patients": int(n_series),
+        "history_len": int(history_len),
+        "pred_len": int(pred_len),
+        "targets": target_cols,
     }
-    save_json(meta, out_dir / "run_meta.json")
-    print(f"[reuse] Wrote: {out_long}")
+    save_json(meta, out_dir / "ctgan_run_meta.json")
+
+    print(f"[ARDM+CTGAN] wrote: {out_dir}")
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", required=True)
+    args = ap.parse_args()
+    main(args.config)
