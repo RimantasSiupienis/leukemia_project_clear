@@ -1,0 +1,60 @@
+# S4M smoke config for pipeline conventions
+
+run:
+  run_name: "s4m_smoke_pipeline"
+  dataset: "physionet2012"
+  device: "cpu"
+  seed: 2023
+
+paths:
+  repo_root: "."
+  data_dir: "data/processed"
+  real_long_path: "data/processed/physionet2012_long_smoke.parquet"
+  out_dir: "results/s4m/physionet2012/s4m_smoke_pipeline"
+
+schema:
+  id_col: "patient_id"
+  time_col: "t"
+  drop_cols: ["patient_id", "t", "date"] # date is non-numeric in your parquet
+  target_col: "HR"
+  features_mode: "M" # multivariate
+  freq: "h"
+
+task:
+  seq_len: 8
+  label_len: 0
+  pred_len: 1
+
+# after dropping id/time/date, the smoke parquet has 8 numeric variables:
+# HR, NISysABP, NIDiasABP, NIMAP, RespRate, Temp, SpO2, Age  means d_var=8
+dims:
+  d_var: 8
+  enc_in: 8
+  dec_in: 8
+  c_out: 8
+
+s4m_cli_overrides:
+  model: "S4M"
+  data: "parquet_long"
+  features: "M"
+  use_gpu: false
+
+  # tiny model
+  d_model: 8
+  d_ff: 16
+  e_layers: 1
+  n_heads: 1
+  en_conv_hidden_size: 8
+  d_state: 8
+
+  # tiny train/test
+  batch_size: 8
+  train_epochs: 1
+  num_workers: 0
+
+  # disabling memory module for stability in smoke tests
+  memnet: 0
+  K: 0
+  M: 0
+  topK: 0
+  topM: 0

@@ -1,0 +1,55 @@
+########################
+# Python / system junk
+########################
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+.DS_Store
+
+########################
+# Virtual environments
+########################
+venv/
+.venv/
+.pyenv/
+
+########################
+# Editors
+########################
+.vscode/
+.idea/
+
+########################
+# RESULTS
+# Ignore all results EXCEPT CTGAN physionet
+########################
+results/*
+!results/ctgan/
+!results/ctgan/physionet2012/
+!results/ctgan/physionet2012/**
+
+########################
+# DATA
+# Keep processed parquet only
+########################
+data/*
+!data/processed/
+data/processed/*
+!data/processed/*.parquet
+
+########################
+# EVERYTHING ELSE
+# (do NOT block models/, scripts/, evaluation/)
+########################
+
+# Model caches / derived artifacts
+models/**/data_cache/
+
+# Runtime outputs
+result_long_term_forecast.txt
+
+# Git / environment metadata
+.gitmodules
+.python-version

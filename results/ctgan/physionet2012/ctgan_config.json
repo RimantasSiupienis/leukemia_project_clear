@@ -1,0 +1,30 @@
+{
+  "input_table_path": "data/processed/physionet2012_long.parquet",
+  "output_folder": "results/ctgan/physionet2012",
+  "patient_id_col": "patient_id",
+  "time_col": "t",
+  "static_aggregation": "mean",
+  "test_fraction": 0.0,
+  "missing_mode": "indicators",
+  "epochs": 300,
+  "batch_size": 500,
+  "seed": 42,
+  "n_train_patients": 8000,
+  "discrete_columns": [
+    "Gender",
+    "ICUType",
+    "HR__is_missing",
+    "NISysABP__is_missing",
+    "NIDiasABP__is_missing",
+    "NIMAP__is_missing",
+    "RespRate__is_missing",
+    "Temp__is_missing",
+    "Gender__is_missing",
+    "Height__is_missing",
+    "Weight__is_missing"
+  ],
+  "train_split_ids_json": null,
+  "real_static_path": "results/ctgan/physionet2012/real_static.parquet",
+  "synthetic_static_path": "results/ctgan/physionet2012/ctgan_static.parquet",
+  "ctgan_model_path": "results/ctgan/physionet2012/ctgan_model.pkl"
+}

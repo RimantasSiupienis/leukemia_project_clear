@@ -1,0 +1,87 @@
+seed: 42
+
+data:
+  long_path: "data/processed/physionet2012_long.parquet"
+  id_col: "patient_id"
+  time_col: "t"
+  target_cols: ["HR", "NISysABP", "NIDiasABP", "NIMAP", "RespRate", "Temp", "SpO2"]
+
+task:
+  # PhysioNet2012 is typically 48 hourly steps
+  # seq_len + pred_len <= per-patient length required
+  seq_len: 12 #36
+  pred_len: 4 #12
+  step_stride: 1
+
+split:
+  method: "patient_hash"
+  seed: 42
+  train: 0.7
+  val: 0.1
+  test: 0.2
+
+loader:
+  batch_size: 2 #32
+  num_workers: 0
+  drop_last: false
+  pin_memory: true
+
+model:
+  repo_dir: "models/s4m_model/s4m_official"
+  params:
+    # MUST match task
+    seq_len: 12
+    pred_len: 4
+
+    # MUST match number of target_cols
+    d_var: 7
+
+    # keep the rest "official-ish" defaults
+    d_model: 256
+    d_ff: 256
+    e_layers: 3
+    dropout: 0.1
+
+    mask: true
+    classification: false
+    plot: false
+    num_class: 2
+    is_training: true
+
+    short_len: 16
+    W: 8
+    K: 4
+    topM: 2000
+    topK: 32
+    momentum: 0.99
+
+    n: 1
+    en_conv_hidden_size: 256
+    en_rnn_hidden_sizes: [256]
+    input_keep_prob: 1.0
+    output_keep_prob: 1.0
+    n_heads: 4
+    factor: 5
+    output_attention: false
+    activation: "gelu"
+
+    M: 512
+    memory_size: 512
+    per_mem_size: 1
+    thres1: 0.1
+    thres2: 0.1
+
+optim:
+  lr: 3e-4
+  weight_decay: 1e-4
+  epochs: 1 #20
+
+output:
+  dir: "results/s4m"
+  run_name: "physionet2012_s4m_base"
+  model_file: "model.pt"
+  split_ids: "split_ids.json"
+  config_resolved: "config_resolved.yaml"
+  run_meta: "run_meta.json"
+  real_future: "real_future_long.parquet"
+  synth_future: "synth_future_long.parquet"

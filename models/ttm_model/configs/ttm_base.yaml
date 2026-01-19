@@ -1,0 +1,63 @@
+seed: 42
+
+data:
+  long_path: "data/processed/physionet2012_long.parquet"
+  id_col: "patient_id"
+  time_col: "t"
+  target_cols:
+    - HR
+    - NISysABP
+    - NIDiasABP
+    - NIMAP
+    - RespRate
+    - Temp
+    - SpO2
+
+task:
+  history_len: 24
+  pred_len: 24
+
+split:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+
+ttm:
+  model_path: "results/ttm/physionet2012/ttm_run/_ttm_finetune/checkpoint-15"
+  revision: "main"
+
+  # full for actual fine-tuning, partial for head-only training
+  fit_strategy: "zero-shot"
+  
+  training_args:
+    output_dir: "results/ttm/physionet2012/ttm_run/_ttm_finetune"
+    overwrite_output_dir: true
+
+    # training
+    num_train_epochs: 15
+    learning_rate: 0.0003
+    warmup_ratio: 0.05
+    weight_decay: 0.01
+
+    # batching (CPU-safe)
+    per_device_train_batch_size: 16
+    gradient_accumulation_steps: 2
+
+    # stability
+    fp16: false
+    bf16: false
+    dataloader_num_workers: 2
+
+    # logging / saving
+    logging_steps: 20
+    save_strategy: "epoch"
+    save_total_limit: 30
+
+    report_to: "none"
+
+output:
+  dir: "results/ttm/physionet2012/ttm_run"
+
+
+  #bash scripts/run_all/run_all_ttm.sh models/ttm_model/configs/ttm_base.yaml
+

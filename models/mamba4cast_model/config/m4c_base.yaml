@@ -1,0 +1,35 @@
+seed: 42
+device: auto
+
+mode: univariate # univariate or multivariate
+scaling: minmax # none or zscore or minmax
+force_channel_dim: true
+
+data:
+  parquet_path: data/processed/physionet2012_long.parquet
+  id_col: patient_id
+  time_col: t
+  target_cols: ["HR", "NISysABP", "NIDiasABP", "NIMAP", "RespRate", "Temp", "SpO2"]
+  context_length: 24
+  prediction_length: 24
+
+split:
+  method: patient_hash
+  seed: 42
+  test_fraction: 0.20
+  hash_salt: mamba4cast
+
+model:
+  repo_dir: models/mamba4cast_model/m4c_official/Mamba4Cast
+  checkpoint_path: models/mamba4cast_model/m4c_official/Mamba4Cast/models/mamba4cast_2l_1024_conv_i5e5.pth
+
+output:
+  dir: results/mamba4cast
+  run_name: physionet2012_m4c_zeroshot
+
+debug:
+  enabled: true
+  max_patients_total: 200
+  max_test_patients: 20
+  max_targets: null   # was 3; null means full 7-target output
+  skip_model: true #false
