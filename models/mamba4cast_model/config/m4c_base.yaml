@@ -28,8 +28,9 @@ output:
   run_name: physionet2012_m4c_zeroshot
 
 debug:
-  enabled: true
-  max_patients_total: 200
-  max_test_patients: 20
-  max_targets: null   # was 3; null means full 7-target output
-  skip_model: true #false
+  enabled: false
+  skip_model: false
+  # When enabled=false, the runner will not cap dataset sizes.
+  # Leave these unset (or null) to avoid accidental caps.
+  max_patients_train: null
+  max_patients_test: null

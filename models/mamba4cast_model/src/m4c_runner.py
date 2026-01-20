@@ -586,7 +586,29 @@ def main(cfg_path: Optional[str] = None) -> None:
     real_long.to_parquet(real_path, index=False)
     synth_long.to_parquet(synth_path, index=False)
 
+    # --- extra environment metadata for reproducibility (GPU/torch) ---
+    torch_meta = {}
+    try:
+        import torch  # type: ignore
+
+        torch_meta["torch_version"] = getattr(torch, "__version__", None)
+        torch_meta["cuda_available"] = bool(torch.cuda.is_available())
+        torch_meta["cuda_version"] = getattr(getattr(torch, "version", None), "cuda", None)
+
+        if torch.cuda.is_available():
+            try:
+                torch_meta["cuda_device_name"] = torch.cuda.get_device_name(0)
+            except Exception:
+                torch_meta["cuda_device_name"] = None
+            try:
+                torch_meta["cuda_device_count"] = int(torch.cuda.device_count())
+            except Exception:
+                torch_meta["cuda_device_count"] = None
+    except Exception:
+        torch_meta = {"torch_version": None, "cuda_available": False, "cuda_version": None}
+
     run_meta = {
+
         "seed": seed,
         "device": str(device),
         "context_length": int(context_length),
@@ -608,6 +630,8 @@ def main(cfg_path: Optional[str] = None) -> None:
         "rows_synth_future": int(len(synth_long)),
         "stats": stats_all,
         "elapsed_sec": float(time.time() - t0),
+        "env": torch_meta,
+
     }
     save_json(run_meta, str(run_dir / "run_meta.json"))
 
