@@ -34,6 +34,8 @@ results/*
 !results/ardm/
 !results/ardm/physionet2012/
 !results/ardm/physionet2012/**
+!results/ardm/full_ctgan_trajectories/
+!results/ardm/full_ctgan_trajectories/**
 ########################
 # DATA
 # Keep processed parquet only

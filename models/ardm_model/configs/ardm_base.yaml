@@ -26,7 +26,7 @@ data:
     type: zscore
     save_stats: true
 official:
-  repo_dir: kaggle/working/ARMD
+  repo_dir: /kaggle/working/ardm_project/ARMD
   entrypoint:
     python: python
 dataloader:
@@ -37,7 +37,7 @@ dataloader:
   drop_last: false
 train:
   batch_size: 128
-  lr: 1e-3
+  lr: 0.001
   max_iters: 2000
 sampling:
   steps: 1
@@ -75,7 +75,6 @@ solver:
       warmup_lr: 0.0008
       warmup: 500
       verbose: false
-
 ctgan:
   static_parquet: results/ctgan/physionet2012/ctgan_static.parquet
-  checkpoint_path: results/ardm/physionet2012/ardm_outputs/_official_out/Checkpoints_24/checkpoint-1.pt
+  checkpoint_path: /kaggle/input/ardm-3/other/default/1/results/ardm/physionet2012/ardm_outputs/_official_out/Checkpoints_24/checkpoint-1.pt

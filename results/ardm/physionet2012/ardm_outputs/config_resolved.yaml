@@ -75,3 +75,6 @@ solver:
       warmup_lr: 0.0008
       warmup: 500
       verbose: false
+ctgan:
+  static_parquet: results/ctgan/physionet2012/ctgan_static.parquet
+  checkpoint_path: results/ardm/physionet2012/ardm_outputs/_official_out/Checkpoints_24/checkpoint-1.pt

@@ -1,0 +1,42 @@
+{
+  "seed": 42,
+  "history_len": 24,
+  "pred_len": 24,
+  "target_cols": [
+    "HR",
+    "NISysABP",
+    "NIDiasABP",
+    "NIMAP",
+    "RespRate",
+    "Temp",
+    "SpO2"
+  ],
+  "ctgan_static_parquet": "/kaggle/working/ardm_project/results/ctgan/physionet2012/ctgan_static.parquet",
+  "real_long_parquet": "/kaggle/working/ardm_project/data/processed/physionet2012_long.parquet",
+  "train_split_ids_json": "/kaggle/working/ardm_project/results/ardm/physionet2012/ardm_outputs/ctgan_pipeline/train_ids_for_bootstrap.json",
+  "baseline_map_json": null,
+  "baseline_mapping_used": "DIRECT_IF_PRESENT",
+  "template_bootstrap_method": "random_train_template + mean_shift_to_ctgan_baseline",
+  "n_ctgan_patients": 8000,
+  "template_meta": {
+    "n_train_ids_provided": 5600,
+    "n_rows_train_long": 268800,
+    "n_templates": 5600,
+    "n_skipped_short_or_nan": 0,
+    "example_skipped_ids": [],
+    "example_kept_ids": [
+      "A_132540",
+      "A_132543",
+      "A_132545",
+      "A_132554",
+      "A_132555",
+      "A_132567",
+      "A_132568",
+      "A_132570",
+      "A_132575",
+      "A_132577"
+    ]
+  },
+  "chosen_template_idx_path": "chosen_template_idx.npy",
+  "notes": "future part of bootstrap_windows_for_model.npy is all zeros (masked) for the longitudinal model to generate."
+}
