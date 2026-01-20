@@ -145,7 +145,8 @@ def main(cfg_path: str | None = None) -> None:
     save_preds_long = bool(out_cfg.get("save_preds_long", False))
 
     run_dir = out_root / run_name
-    ensure_dir(str(run_dir))
+    ensure_dir(run_dir)
+
 
     # leaving a trace so the run dir looks alive while the loop is still running
     with open(run_dir / "_run_started.txt", "w", encoding="utf-8") as f:

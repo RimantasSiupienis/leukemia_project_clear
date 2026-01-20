@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import time
+import platform
 import numpy as np
 import pandas as pd
 import torch
@@ -30,8 +32,9 @@ def impute_long_df(
 ) -> pd.DataFrame:
     """
     Imputation for forecasting baselines:
-    - for each patient: forward fill then backward fill, only uses that patient's timeline
-    - remaining NaNs: fill with the train split column means to prevent test leakage
+    - for each patient: forward fill then backward fill (within-patient only)
+    - remaining NaNs: fill with TRAIN split column means (no test leakage)
+    - remaining NaNs (column fully missing in train): fill 0.0
     """
     df = df.copy()
     df = df.sort_values([id_col, time_col])
@@ -43,10 +46,9 @@ def impute_long_df(
     # train split means for remaining NaNs
     train_mask = df[id_col].astype(str).isin(set(map(str, train_ids)))
     col_means = df.loc[train_mask, value_cols].mean(numeric_only=True)
-
     df[value_cols] = df[value_cols].fillna(col_means)
 
-    # when still NaN if entire column missing in train
+    # if still NaN (entire column missing in train)
     df[value_cols] = df[value_cols].fillna(0.0)
 
     return df
@@ -66,6 +68,7 @@ def _import_shared_utils():
 
 
 set_seed, ensure_dir, load_parquet, save_json, df_checks = _import_shared_utils()
+
 
 # Configs
 def load_cfg(path: Path) -> dict:
@@ -93,8 +96,7 @@ def patient_split(ids: List[Any], split: SplitCfg) -> Dict[str, List[Any]]:
     ids = list(ids)
 
     if split.method == "patient_hash":
-        # Stable across machines without RNG
-        # Based only on patient id
+        # stable across machines (no RNG), based only on patient id
         def bucket(x: Any) -> float:
             h = hashlib.sha256(str(x).encode("utf-8")).hexdigest()
             return int(h[:8], 16) / float(16**8)
@@ -128,6 +130,7 @@ def patient_split(ids: List[Any], split: SplitCfg) -> Dict[str, List[Any]]:
 
     return {"train_ids": train_ids, "val_ids": val_ids, "test_ids": test_ids}
 
+
 # Static covariate handling
 def load_static_table(cfg: dict) -> Optional[pd.DataFrame]:
     if not cfg.get("enabled", False):
@@ -143,9 +146,9 @@ def load_static_table(cfg: dict) -> Optional[pd.DataFrame]:
 
     sid = cfg.get("id_col", "patient_id")
     if sid not in static_df.columns:
-        raise ValueError(f"Baseine missing id_col='{sid}' in {static_path}")
+        raise ValueError(f"Baseline missing id_col='{sid}' in {static_path}")
 
-    # enforces one row per patient
+    # enforce 1 row per patient
     if static_df.duplicated(subset=[sid]).any():
         raise ValueError(f"Baseline has duplicate ids in '{sid}': {static_path}")
 
@@ -175,10 +178,9 @@ def attach_static_to_long(
     if static_cols:
         miss_all = merged[static_cols].isna().all(axis=1)
         if miss_all.any():
-            bad_ids = merged.loc[miss_all, id_col].unique()[:10]
             raise ValueError(
-                f"Missing static features for some patients "
-                f"CTGAN static tables have to cover all ids used in run"
+                "Missing static features for some patients. "
+                "Static table must cover all ids used in this run."
             )
     return merged, static_cols
 
@@ -202,7 +204,7 @@ def build_windows_for_patients(
     step_stride: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Returns
+    Returns:
       X [N, context_len, C_in]
       Y [N, horizon, C_tgt]
     """
@@ -227,8 +229,9 @@ def build_windows_for_patients(
             Y_list.append(y)
 
     if not X_list:
-        return np.zeros((0, context_len, len(input_cols)), dtype=np.float32), np.zeros(
-            (0, horizon, len(target_cols)), dtype=np.float32
+        return (
+            np.zeros((0, context_len, len(input_cols)), dtype=np.float32),
+            np.zeros((0, horizon, len(target_cols)), dtype=np.float32),
         )
 
     X = np.stack(X_list, axis=0)
@@ -261,20 +264,22 @@ def configure_torch_determinism(seed: int) -> None:
     except Exception:
         pass
 
+
 def _get_pred_tensor(model_out: Any, horizon: int) -> torch.Tensor:
     """
-    For using iTransformer variants that return either:
-      - a Tensor of shape [B, H, C] or [B, H]
-      - a dict mapping horizon to a tensor
+    Supports iTransformer variants that return either:
+      - Tensor [B, H, C] (most common)
+      - dict {horizon: Tensor}
     """
     if isinstance(model_out, dict):
         if horizon not in model_out:
-            raise KeyError(f"iTransformer returned horizons {list(model_out.keys())}, expected horizon={horizon}.")
+            raise KeyError(
+                f"iTransformer returned horizons {list(model_out.keys())}, expected horizon={horizon}."
+            )
         return model_out[horizon]
     if torch.is_tensor(model_out):
         return model_out
     raise TypeError(f"Unexpected model output type: {type(model_out)}")
-
 
 
 def train_one_epoch(
@@ -296,9 +301,8 @@ def train_one_epoch(
         y_true = batch["y"].to(device)  # [B, H, C_tgt]
 
         model_out = model(x)
-        y_pred_all = _get_pred_tensor(model_out, horizon) # [B, H, C_in]
-        y_pred = y_pred_all[:, :, target_idx] # [B, H, C_tgt]
-
+        y_pred_all = _get_pred_tensor(model_out, horizon)  # [B, H, C_in] or [B, H, C]
+        y_pred = y_pred_all[:, :, target_idx]  # [B, H, C_tgt]
 
         loss = mse(y_pred, y_true)
 
@@ -335,20 +339,21 @@ def evaluate(
 
         model_out = model(x)
         y_pred_all = _get_pred_tensor(model_out, horizon)
-        y_pred = y_pred_all[:, :, target_idx]   
-
+        y_pred = y_pred_all[:, :, target_idx]
 
         total_loss += float(mse(y_pred, y_true).detach().cpu())
         total_count += int(y_true.numel())
 
     return float("nan") if total_count == 0 else total_loss / total_count
 
-# Inference exports 
+
+# Inference exports
 def _infer_future_times(last_time: Any, horizon: int) -> List[Any]:
     """
     Creates future time index for predicted rows.
-        Numeric: last_time + 1..H
-        Datetime: last_time + 1..H days
+      - numeric: last_time + 1..H
+      - datetime: last_time + 1..H days
+      - fallback: 1..H
     """
     if pd.api.types.is_datetime64_any_dtype(pd.Series([last_time])):
         base = pd.Timestamp(last_time)
@@ -357,7 +362,6 @@ def _infer_future_times(last_time: Any, horizon: int) -> List[Any]:
         x = float(last_time)
         return [x + i for i in range(1, horizon + 1)]
     except Exception:
-        # backup: using 1..H
         return [i for i in range(1, horizon + 1)]
 
 
@@ -378,9 +382,8 @@ def export_forecast_horizon_artifacts(
     """
     Creates 3 artifacts:
       preds_long_df: [id_col, target, horizon_step, pred]
-      real_future_df: long format wide targets: [id_col, time_col] + target_cols
-      synth_future_df: same schema as real_future_df (the predicted horizon)
-    Forecasting eval: comparing real_future_df vs synth_future_df as [N,T,D] using metric adapters.
+      real_future_df: [id_col, time_col] + target_cols
+      synth_future_df: same schema as real_future_df
     """
     model.eval()
     df_test = _sorted_patient_df(df_test, id_col, time_col)
@@ -393,20 +396,19 @@ def export_forecast_horizon_artifacts(
         pdf = pdf.sort_values(time_col)
 
         if len(pdf) < max(min_history, context_len + horizon):
-            # needs enough to extract a real future horizon as well
             continue
 
-        # Defines eval window as the last available segment from context + horizon
+        # define eval window as last (context + horizon)
         window = pdf.iloc[-(context_len + horizon) :]
         hist = window.iloc[:context_len]
-        fut = window.iloc[context_len:] # real future horizon (H rows)
+        fut = window.iloc[context_len:]
 
-        x_in = hist[input_cols].to_numpy(dtype=np.float32) # [L, C_in]
-        x = torch.from_numpy(x_in).unsqueeze(0).to(device) # [1, L, C_in]
+        x_in = hist[input_cols].to_numpy(dtype=np.float32)  # [L, C_in]
+        x = torch.from_numpy(x_in).unsqueeze(0).to(device)  # [1, L, C_in]
 
         model_out = model(x)
-        y_pred_all = _get_pred_tensor(model_out, horizon)  # [B, H, C_in] or [B, H, C]
-        y_pred = y_pred_all[:, :, target_idx].squeeze(0)   # [H, C_tgt]
+        y_pred_all = _get_pred_tensor(model_out, horizon)  # [1, H, C_in] or [1, H, C]
+        y_pred = y_pred_all[:, :, target_idx].squeeze(0)  # [H, C_tgt]
 
         # preds_long.parquet
         for h in range(horizon):
@@ -420,16 +422,14 @@ def export_forecast_horizon_artifacts(
                     }
                 )
 
-        # real_future_long.parquet
-        # using actual timestamps from future when possible
+        # real_future_long.parquet (use actual timestamps)
         for i in range(horizon):
             row: Dict[str, Any] = {id_col: str(pid), time_col: fut.iloc[i][time_col]}
             for tgt in target_cols:
                 row[tgt] = float(fut.iloc[i][tgt])
             real_rows.append(row)
 
-        # synth_future_long.parquet 
-        # using same timestamps when possible
+        # synth_future_long.parquet (use same timestamps)
         fut_times = fut[time_col].tolist()
         if len(fut_times) != horizon:
             fut_times = _infer_future_times(hist.iloc[-1][time_col], horizon)
@@ -443,8 +443,8 @@ def export_forecast_horizon_artifacts(
     preds_long_df = pd.DataFrame(preds_long)
     real_future_df = pd.DataFrame(real_rows)
     synth_future_df = pd.DataFrame(synth_rows)
-
     return preds_long_df, real_future_df, synth_future_df
+
 
 # Main runner
 def main(cfg_path: str | None = None) -> None:
@@ -465,7 +465,9 @@ def main(cfg_path: str | None = None) -> None:
     run_dir = out_root / run_name
     ensure_dir(str(run_dir))
 
-    # saves resolved config snapshot
+    t0 = time.time()
+
+    # save resolved config snapshot
     with open(run_dir / "config_resolved.yaml", "w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
 
@@ -480,25 +482,22 @@ def main(cfg_path: str | None = None) -> None:
     df = load_parquet(str(long_path))
     df_checks(df, id_col=id_col, time_col=time_col)
 
-    # target check, must be in data
     missing_targets = [c for c in target_cols if c not in df.columns]
     if missing_targets:
         raise ValueError(f"Missing target columns in data: {missing_targets}")
 
-    # attaches static covariates as constant channels
+    # attach static covariates (constant channels)
     static_df = load_static_table(static_cfg)
     if static_df is not None:
         static_id_col = static_cfg.get("id_col", id_col)
         df, static_cols = attach_static_to_long(df, static_df, id_col=id_col, static_id_col=static_id_col)
-
-        # never allow static cols to duplicate target cols for safety
         static_cols = [c for c in static_cols if c not in set(target_cols)]
     else:
         static_cols = []
 
     input_cols = list(target_cols) + list(static_cols)
 
-    # patient level split
+    # patient-level split
     split_cfg = cfg.get("split", {})
     split = SplitCfg(
         method=str(split_cfg.get("method", "patient_hash")),
@@ -510,8 +509,9 @@ def main(cfg_path: str | None = None) -> None:
 
     ids = df[id_col].astype(str).unique().tolist()
     split_ids = patient_split(ids, split)
-    # Imputing targets so losses don't become NaN
-    # + static covariates if present
+    save_json(split_ids, str(run_dir / "split_ids.json"))
+
+    # impute targets (and static covariates) for stability
     value_cols = list(target_cols) + list(static_cols)
     df = impute_long_df(
         df=df,
@@ -528,9 +528,9 @@ def main(cfg_path: str | None = None) -> None:
     step_stride = int(task_cfg.get("step_stride", 1))
     min_history = int(task_cfg.get("min_history", context_len))
 
-    df_train = df[df[id_col].astype(str).isin(set(split_ids["train_ids"]))].copy()
-    df_val = df[df[id_col].astype(str).isin(set(split_ids["val_ids"]))].copy()
-    df_test = df[df[id_col].astype(str).isin(set(split_ids["test_ids"]))].copy()
+    df_train = df[df[id_col].astype(str).isin(set(map(str, split_ids["train_ids"])))].copy()
+    df_val = df[df[id_col].astype(str).isin(set(map(str, split_ids["val_ids"])))].copy()
+    df_test = df[df[id_col].astype(str).isin(set(map(str, split_ids["test_ids"])))].copy()
 
     X_train, Y_train = build_windows_for_patients(
         df_train, id_col, time_col, input_cols, target_cols, context_len, horizon, step_stride
@@ -540,9 +540,7 @@ def main(cfg_path: str | None = None) -> None:
     )
 
     if X_train.shape[0] == 0:
-        raise RuntimeError(
-            "No training windows could be built."
-        )
+        raise RuntimeError("No training windows could be built.")
 
     optim_cfg = cfg.get("optim", {})
     batch_size = int(optim_cfg.get("batch_size", 32))
@@ -553,15 +551,19 @@ def main(cfg_path: str | None = None) -> None:
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=torch.cuda.is_available(),
     )
-    val_loader = DataLoader(
-        WindowDataset(X_val, Y_val),
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
-    ) if X_val.shape[0] > 0 else None
+    val_loader = (
+        DataLoader(
+            WindowDataset(X_val, Y_val),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+        )
+        if X_val.shape[0] > 0
+        else None
+    )
 
     # model params
     mcfg = cfg.get("model", {})
@@ -586,8 +588,7 @@ def main(cfg_path: str | None = None) -> None:
     epochs = int(optim_cfg.get("epochs", 10))
     grad_clip_norm = float(optim_cfg.get("grad_clip_norm", 0.0))
 
-    # index mapping
-    # target cols are first in input_cols
+    # target columns are first in input_cols by construction
     target_idx = list(range(len(target_cols)))
 
     best_val_mse = float("inf")
@@ -606,28 +607,26 @@ def main(cfg_path: str | None = None) -> None:
         print(f"iTransformer [Epoch {epoch:03d}] train_loss={train_loss:.6f} val_mse={val_mse:.6f}")
 
         improved = (best_state is None) or (val_loader is None) or (np.isfinite(val_mse) and val_mse < best_val_mse)
-
-    if improved:
-        if val_loader is not None and np.isfinite(val_mse):
-            best_val_mse = val_mse
-        best_state = {
-            "model_state_dict": model.state_dict(),
-            "model_params": mparams,
-            "seed": seed,
-            "input_cols": input_cols,
-            "target_cols": target_cols,
-            "static_cols": static_cols,
-            "context_len": context_len,
-            "horizon": horizon,
-        }
-
+        if improved:
+            if val_loader is not None and np.isfinite(val_mse):
+                best_val_mse = val_mse
+            best_state = {
+                "model_state_dict": model.state_dict(),
+                "model_params": mparams,
+                "seed": seed,
+                "input_cols": input_cols,
+                "target_cols": target_cols,
+                "static_cols": static_cols,
+                "context_len": context_len,
+                "horizon": horizon,
+            }
 
     ckpt_path = run_dir / "model.pt"
     if best_state is None:
         raise RuntimeError("Training didn't produce a checkpoint.")
     torch.save(best_state, ckpt_path)
 
-    # Exporting artifacts for evaluation
+    # export evaluation artifacts (on current model weights)
     preds_long_df, real_future_df, synth_future_df = export_forecast_horizon_artifacts(
         model=model,
         df_test=df_test,
@@ -650,11 +649,24 @@ def main(cfg_path: str | None = None) -> None:
     real_future_df.to_parquet(real_future_path, index=False)
     synth_future_df.to_parquet(synth_future_path, index=False)
 
-    run_meta = {
+    t1 = time.time()
+
+    run_meta: Dict[str, Any] = {
         "seed": seed,
         "framework": "PyTorch",
         "model_impl": "lucidrains/iTransformer",
         "device": str(device),
+        "run_dir": str(run_dir),
+        "started_unix": float(t0),
+        "ended_unix": float(t1),
+        "duration_sec": float(t1 - t0),
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+        "torch_version": torch.__version__,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_version": torch.version.cuda if hasattr(torch.version, "cuda") else None,
+        "cudnn_version": torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None,
+        "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "n_patients_total": int(df[id_col].nunique()),
         "n_patients_train": int(len(split_ids["train_ids"])),
         "n_patients_val": int(len(split_ids["val_ids"])),
@@ -676,6 +688,7 @@ def main(cfg_path: str | None = None) -> None:
         "preds_path": str(preds_path),
         "real_future_path": str(real_future_path),
         "synth_future_path": str(synth_future_path),
+        "split_ids_path": str(run_dir / "split_ids.json"),
     }
     save_json(run_meta, str(run_dir / "run_meta.json"))
 
