@@ -325,7 +325,7 @@ def main():
     meta_path = traj_dir / "run_meta.json"
     with open(meta_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(meta, f, sort_keys=False)
-    print("[itransformer] wrote ctgan_itransformer_run_meta.json")
+    print("[itransformer] wrote run_meta.json")
     # Writes resolved config YAML snapshot
     config_res_path = traj_dir / "itransformer_config_resolved.yaml"
     with open(config_res_path, "w", encoding="utf-8") as f:

@@ -259,8 +259,12 @@ def configure_torch_determinism(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+    # Strict deterministic algorithms can crash on CUDA (CuBLAS) unless
+    # CUBLAS_WORKSPACE_CONFIG is set before Python starts.
+    # For Kaggle, we keep deterministic seeds/cudnn flags but don't hard-fail.
     try:
-        torch.use_deterministic_algorithms(True)
+        torch.use_deterministic_algorithms(False)
     except Exception:
         pass
 
@@ -463,7 +467,7 @@ def main(cfg_path: str | None = None) -> None:
     run_name = out_cfg.get("run_name", "itransformer_run")
 
     run_dir = out_root / run_name
-    ensure_dir(str(run_dir))
+    ensure_dir(run_dir)
 
     t0 = time.time()
 

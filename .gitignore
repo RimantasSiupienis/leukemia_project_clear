@@ -36,6 +36,9 @@ results/*
 !results/ardm/physionet2012/**
 !results/ardm/full_ctgan_trajectories/
 !results/ardm/full_ctgan_trajectories/**
+
+!results/itransformer/
+!results/itransformer/**
 ########################
 # DATA
 # Keep processed parquet only

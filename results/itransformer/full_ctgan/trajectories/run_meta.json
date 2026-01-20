@@ -1,0 +1,38 @@
+mode: ctgan_static_itransformer_full
+seed: 42
+itransformer_run_dir: /kaggle/working/leukemia_project/results/itransformer/physionet2012_itransformer_full
+inputs:
+  ctgan_static_parquet: /kaggle/working/leukemia_project/results/ctgan/physionet2012/ctgan_static.parquet
+  real_long_parquet: /kaggle/working/leukemia_project/data/processed/physionet2012_long.parquet
+  split_ids_json: /kaggle/working/leukemia_project/results/itransformer/physionet2012_itransformer_full/split_ids.json
+bootstrap:
+  dir: /kaggle/working/leukemia_project/results/itransformer/full_ctgan/bootstrap
+  history_npy: /kaggle/working/leukemia_project/results/itransformer/full_ctgan/bootstrap/bootstrap_history.npy
+itransformer:
+  model_impl: lucidrains/iTransformer
+  device: cuda
+  params:
+    dim: 256
+    depth: 4
+    heads: 8
+    dim_head: 64
+    num_tokens_per_variate: 1
+    use_reversible_instance_norm: true
+    num_variates: 12
+    lookback_len: 24
+    pred_length:
+    - 24
+task:
+  context_len: 24
+  horizon: 24
+  targets:
+  - HR
+  - NISysABP
+  - NIDiasABP
+  - NIMAP
+  - RespRate
+  - Temp
+  - SpO2
+outputs:
+  ctgan_itransformer_synth_future_long: /kaggle/working/leukemia_project/results/itransformer/full_ctgan/trajectories/synth_future_long.parquet
+n_synth: 200

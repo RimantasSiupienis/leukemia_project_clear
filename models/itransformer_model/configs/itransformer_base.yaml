@@ -1,36 +1,39 @@
 seed: 42
-
 data:
-  long_path: "data/processed/physionet2012_long.parquet"
-  id_col: "patient_id"
-  time_col: "t"
-
-  # Long targets
-  target_cols: ["HR", "NISysABP", "NIDiasABP", "NIMAP", "RespRate", "Temp", "SpO2"]
-
+  long_path: data/processed/physionet2012_long.parquet
+  id_col: patient_id
+  time_col: t
+  target_cols:
+  - HR
+  - NISysABP
+  - NIDiasABP
+  - NIMAP
+  - RespRate
+  - Temp
+  - SpO2
 task:
-  context_len: 48  
+  context_len: 24
   horizon: 24
   step_stride: 1
   min_history: 48
-
 split:
-  method: "patient_hash"
+  method: patient_hash
   seed: 42
-  train: 0.70
-  val: 0.10
-  test: 0.20
-
+  train: 0.7
+  val: 0.1
+  test: 0.2
 static:
   enabled: true
-  source: "ctgan"
-  real_path: "results/ctgan/physionet2012/real_static.parquet"
-  ctgan_path: "results/ctgan/physionet2012/ctgan_static.parquet"
-  id_col: "patient_id"
-  # static covariates, no overlap with targets
-  use_cols: ["Age", "Gender", "Height", "ICUType", "Weight"]
-
-
+  source: ctgan
+  real_path: results/ctgan/physionet2012/real_static.parquet
+  ctgan_path: results/ctgan/physionet2012/ctgan_static.parquet
+  id_col: patient_id
+  use_cols:
+  - Age
+  - Gender
+  - Height
+  - ICUType
+  - Weight
 model:
   params:
     dim: 256
@@ -39,16 +42,13 @@ model:
     dim_head: 64
     num_tokens_per_variate: 1
     use_reversible_instance_norm: true
-
 optim:
   lr: 1e-3
   weight_decay: 0.0
-  epochs: 20
+  epochs: 30
   batch_size: 64
   num_workers: 2
   grad_clip_norm: 1.0
-
-
 output:
-  dir: "results/itransformer"
-  run_name: "physionet2012_itransformer_full"
+  dir: results/itransformer
+  run_name: physionet2012_itransformer_full
