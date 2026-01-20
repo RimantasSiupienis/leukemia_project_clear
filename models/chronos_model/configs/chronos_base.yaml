@@ -1,61 +1,32 @@
-seed: 42
+model:
+  name: Chronos
+  d_model: 128
+  nhead: 4
+  num_encoder_layers: 4
+  dropout: 0.1
+
+training:
+  epochs: 50
+  batch_size: 64
+  learning_rate: 1e-3
+  weight_decay: 1e-4
+  optimizer: adamw
+  seed: 42
 
 data:
-  # long format parquet = one row per patient per time step
-  # schema = [id_col, time_col] + target_cols
-  long_path: "data/processed/physionet2012_long.parquet"
-
-  # physionet patient id 
-  # already mapped in the parquet
-  id_col: "patient_id"
-
-  # time index column in the parquet
-  time_col: "t"
-
-  # targets that actually exist in the current parquet
-  # static fields like age are not forecast targets
+  id_col: patient_id
+  time_col: t
   target_cols:
-    - "HR"
-    - "NISysABP"
-    - "NIDiasABP"
-    - "NIMAP"
-    - "RespRate"
-    - "Temp"
-    - "SpO2"
-
-task:
-  context_len: 24
-  horizon: 24
-  min_history: 48
-
-
-split:
-  # patient_random or patient_hash
-  method: "patient_hash"
-  seed: 42
-  test_fraction: 0.05
-  hash_salt: "chronos"
-
-model:
-  params:
-    # Chronos model id (HF)
-    model_path: "amazon/chronos-t5-small"
-
-    # sampling settings
-    num_samples: 1
-    temperature: 1.0
-    top_k: 50
-    top_p: 1.0
-    limit_prediction_length: false
-
-    # cpu for laptop
-    # will swap to cuda later
-    device_map: "cpu"
-
-    use_source_package: false
-    ignore_deps: false
+    - HR
+    - NISysABP
+    - NIDiasABP
+    - NIMAP
+    - RespRate
+    - Temp
+    - SpO2
+  history_len: 12
+  pred_len: 6
 
 output:
-  dir: "results/chronos/physionet2012"
-  run_name: "chronos_base"
-  save_preds_long: false
+  dir: results/chronos/physionet2012/chronos_base
+  save_every: 5
